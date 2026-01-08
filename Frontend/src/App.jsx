@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import "./App.css";
-// Logo served from Vite public folder at the root path
-const mmclogo = "/mmc-logo.png";
+// Bundle logo via Vite so the correct hashed path is used in build + respects base
+import mmclogo from "./assets/mmc-logo.png";
 
 // Skip ngrok browser warning for API calls
 axios.defaults.headers.common["ngrok-skip-browser-warning"] = "true";
@@ -53,7 +53,33 @@ const GROUPS = {
   "Meta": ["profile", "business", "account"],
 };
 
+const DEFAULT_ENDPOINTS = [
+  "profile",
+  "business",
+  "invoices",
+  "credit_notes",
+  "bill_payments",
+  "billable_items",
+  "bill_vendors",
+  "other_income",
+  "payments",
+  "expenses",
+  "bills",
+  "estimates",
+  "clients",
+  "taxes",
+  "projects",
+  "time_entries",
+  "journal_entries",
+  "ledger_accounts",
+  "chart_of_accounts",
+];
+const DEFAULT_ENDPOINT_STATUS = Object.fromEntries(
+  DEFAULT_ENDPOINTS.map((key) => [key, `${ICON.ok} Ready (not tested)`])
+);
+
 function toTitle(key) {
+  if (key === "payments") return "invoice payments";
   return key.replaceAll("_", " ");
 }
 
@@ -90,6 +116,9 @@ const DATE_KEYS = [
   "create_date",
   "issue_date",
   "date",
+  "created_at",
+  "due_date",
+  "payment_date",
   "entry_date",
   "transaction_date",
   "paid_date",
@@ -122,6 +151,15 @@ const filterByDateRange = (arr, start, end) =>
 const updateCount = (updater, label, value) => {
   const safeLabel = label || "Unknown";
   updater((prev) => ({ ...prev, [safeLabel]: Number(value) || 0 }));
+};
+const formatDateTime = (value) => {
+  const d = new Date(value);
+  if (!Number.isNaN(d.getTime())) return d.toLocaleString();
+  return value || "";
+};
+const toFileName = (type, businessId) => {
+  const safeType = (type || "export").replace(/[^a-z0-9_-]+/gi, "_");
+  return `${safeType}_${businessId || "export"}.csv`;
 };
 
 /* ---------------------------------------------------
@@ -300,11 +338,22 @@ function App() {
 
   /* THEME HANDLING */
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
+  const [customUserName, setCustomUserName] = useState(
+    localStorage.getItem("custom_user_name") || ""
+  );
   useEffect(() => {
     document.body.setAttribute("data-theme", theme);
     localStorage.setItem("theme", theme);
   }, [theme]);
   const toggleTheme = () => setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  useEffect(() => {
+    if (customUserName) {
+      localStorage.setItem("custom_user_name", customUserName);
+      setUserName(customUserName);
+    } else {
+      localStorage.removeItem("custom_user_name");
+    }
+  }, [customUserName]);
 
   /* AUTH + BUSINESS STATES */
   const [accessToken, setAccessToken] = useState("");
@@ -324,6 +373,9 @@ function App() {
   const [testing, setTesting] = useState(false);
   const [bizLoading, setBizLoading] = useState(false);
   const [typeCounts, setTypeCounts] = useState({});
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [selectedHistory, setSelectedHistory] = useState(null);
 
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
@@ -335,6 +387,12 @@ function App() {
   const [filter, setFilter] = useState("all");
   const [openGroups, setOpenGroups] = useState(Object.keys(GROUPS));
 
+  const hasTestResults = Object.keys(endpointStatus).length > 0;
+  const endpointsForUI = useMemo(
+    () => (hasTestResults ? endpointStatus : DEFAULT_ENDPOINT_STATUS),
+    [hasTestResults, endpointStatus]
+  );
+
   const isLoggedIn = Boolean(accessToken && refreshToken);
 
   /* ----------------- RESTORE TOKENS ----------------- */
@@ -345,6 +403,7 @@ function App() {
     const account = params.get("account");
     const business = params.get("business");
     const uuid = params.get("business_uuid");
+    const incomingName = params.get("user_name");
 
     if (access && refresh) {
       setAccessToken(access);
@@ -352,6 +411,10 @@ function App() {
       setAccountId(account || "");
       setBusinessId(business || "");
       setBusinessUUID(uuid || "");
+      if (incomingName) {
+        setCustomUserName(incomingName);
+        localStorage.setItem("custom_user_name", incomingName);
+      }
 
       localStorage.setItem("access", access);
       localStorage.setItem("refresh", refresh);
@@ -391,7 +454,30 @@ function App() {
     }
   };
 
-  const authorize = () => (window.location.href = `${backend}/auth`);
+  const fetchHistory = async () => {
+    if (!accessToken) return;
+    setHistoryLoading(true);
+    try {
+      const res = await axios.get(`${backend}/api/history`, {
+        params: { limit: 200 },
+      });
+      setHistory(res.data?.history || []);
+    } catch (err) {
+      console.error("❌ Failed to load history:", err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isLoggedIn) fetchHistory();
+  }, [isLoggedIn]);
+
+  const authorize = () => {
+    if (!customUserName.trim()) return alert("Please enter your name first.");
+    const url = `${backend}/auth?user_name=${encodeURIComponent(customUserName.trim())}`;
+    window.location.href = url;
+  };
 
   const logout = () => {
     localStorage.clear();
@@ -403,6 +489,9 @@ function App() {
     setBusinessList([]);
     setSelectedBusiness(null);
     setData(null);
+    setHistory([]);
+    setHistoryLoading(false);
+    setSelectedHistory(null);
     window.location.href = "/";
   };
 
@@ -437,6 +526,7 @@ function App() {
     localStorage.setItem("account", selectedBusiness.account_id || "");
     localStorage.setItem("business_id", selectedBusiness.business_id || "");
     localStorage.setItem("business_uuid", selectedBusiness.business_uuid || "");
+    const fileName = toFileName(selectedBusiness.name || "export", selectedBusiness.business_id);
 
     setBizLoading(true);
     setProgress("💾 Updating business...");
@@ -450,11 +540,14 @@ function App() {
           account_id: selectedBusiness.account_id,
           business_id: selectedBusiness.business_id,
           business_uuid: selectedBusiness.business_uuid,
+          file_name: fileName,
+          business_name: selectedBusiness.name,
         },
-        { timeout: 20000 }
+        { timeout: 20000, headers: { "x-user-name": customUserName } }
       );
 
       setProgress(`✅ Updated to: ${selectedBusiness.name}`);
+      await fetchHistory();
     } catch (err) {
       console.error("❌ Failed to update business:", err);
       setProgress(`❌ Business update failed: ${formatAxiosError(err)}`);
@@ -515,6 +608,10 @@ function App() {
           business_id: businessId,
           business_uuid: businessUUID,
           include_raw: true,
+          file_name: toFileName(type, businessId),
+        },
+        headers: {
+          "x-user-name": customUserName,
         },
         timeout: 180000,
       });
@@ -523,12 +620,15 @@ function App() {
       setProgress("✅ Extraction complete!");
       const payload = res.data || {};
       const dataset = Array.isArray(payload.data) ? payload.data : [];
-      const filtered = filterByDateRange(dataset, start, end);
+      const hasDateValues = dataset.some((item) => Boolean(pickDateValue(item)));
+      // Some datasets (e.g., chart_of_accounts) do not carry date fields; skip date filtering for them.
+      const filtered = hasDateValues ? filterByDateRange(dataset, start, end) : dataset;
       setRaw({ ...payload, data: filtered });
       setData({ ...payload, data: filtered, total: filtered.length });
       const label = toTitle(type);
       updateCount(setTypeCounts, label, filtered.length);
       setProgress(`✅ ${label} ready: ${filtered.length} rows`);
+      await fetchHistory();
     } catch (err) {
       console.error("❌ Extraction failed:", err);
       setProgress(`❌ Failed: ${formatAxiosError(err)}`);
@@ -545,8 +645,12 @@ function App() {
     if (!start || !end) return alert("Select date range!");
 
     setLoading(true);
-    setProgress("⏳ Fetching line items...");
+    setProgress("Fetching line items...");
     setData(null);
+    const finishLineExtraction = async () => {
+      await fetchHistory();
+      setLoading(false);
+    };
 
     try {
       const res = await axios.get(`${backend}/api/extract`, {
@@ -560,483 +664,246 @@ function App() {
           line_mode: type === "credit_notes" ? "true" : undefined,
           max_pages: type === "journal_entries" ? 150 : undefined,
           include_raw: true,
+          file_name: toFileName(type, businessId),
         },
+        headers: { "x-user-name": customUserName },
         timeout: ["journal_entries", "invoices", "estimates"].includes(type) ? 300000 : 180000,
       });
 
       setRaw(res.data);
       const raw = res.data?.data || [];
-      const parents = filterByDateRange(raw, start, end);
-      const lines = extractLineItems(type, parents);
+      const hasDateValues = Array.isArray(raw) && raw.some((item) => Boolean(pickDateValue(item)));
+      const parents = hasDateValues ? filterByDateRange(raw, start, end) : raw;
 
-      setData({
-        success: true,
-        total: lines.length,
-        data: lines,
-      });
-
-      setProgress(`📄 ${toTitle(type)} line items: ${lines.length} rows`);
-      updateCount(setTypeCounts, `${toTitle(type)} line items`, lines.length);
-    } catch (err) {
-      console.error("Line item extract failed:", err);
-      alert(`Line item extract failed: ${formatAxiosError(err)}`);
-    }
-
-    setLoading(false);
-  };
-
-  /* ---------------- INVOICE ONE-SHEET (PARENT + LINES) ---------------- */
-  const extractInvoiceSheet = async () => {
-    if (!start || !end) return alert("Select date range!");
-    if (!accountId) return alert("Account ID missing. Update business first.");
-
-    const resolveLineArray = (parent) => {
-      if (!parent) return [];
-      if (Array.isArray(parent.line_items)) return parent.line_items;
-      if (Array.isArray(parent.lines)) return parent.lines;
-      return [];
-    };
-    const toAmount = (value) => {
-      if (value && typeof value === "object") return Number(value.amount ?? value.total ?? value.value ?? 0);
-      return Number(value ?? 0);
-    };
-
-    setLoading(true);
-    setProgress("⏳ Fetching invoices + line items...");
-    setData(null);
-
-    const columns = [
-      "Invoice ID",
-      "id",
-      "fname",
-      "Invoice Number",
-      "Client/Organization",
-      "Date",
-      "Due Date",
-      "Item Name",
-      "Item Description",
-      "Qty",
-      "Unit cost",
-      "Total Amount",
-      "Tax Name 1",
-      "Tax Amount 1",
-      "Tax Percentage1",
-      "Tax Name 2",
-      "Tax Amount 2",
-      "Tax Percentage2",
-      "discount_rate",
-      "discount_type",
-      "Total",
-    ];
-
-    try {
-      const res = await axios.get(`${backend}/api/extract`, {
-        params: {
-          start_date: toDateParam(start),
-          end_date: toDateParam(end),
-          type: "invoices",
-          account_id: accountId,
-          business_id: businessId,
-          business_uuid: businessUUID,
-          include_raw: true,
-        },
-        timeout: 300000,
-      });
-
-      setRaw(res.data);
-      const parentsRaw = res.data?.data || [];
-      const parents = filterByDateRange(parentsRaw, start, end);
-      const rows = [];
-
-      const toDate = (val) => {
-        if (!val) return "";
-        const d = new Date(val);
-        if (Number.isNaN(d.getTime())) return "";
-        return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
-      };
-
-      parents.forEach((parent) => {
-        const parentLines = resolveLineArray(parent);
-        const parentTax1 =
-          (Array.isArray(parent.taxes) && parent.taxes[0]) || parent.tax_summary?.[0] || null;
-        const parentTax2 =
-          (Array.isArray(parent.taxes) && parent.taxes[1]) || parent.tax_summary?.[1] || null;
-        const parentDiscount = toNumberOrZero(
-          parent.discount?.amount ??
-            parent.discount?.rate ??
-            parent.discount_value ??
-            parent.discount_total?.amount ??
-            parent.discount_total ??
-            parent.discount ??
-            0
-        );
-        parentLines.forEach((line) => {
-          const lineDiscount = toNumberOrZero(
-            line.discount?.amount ?? line.discount?.rate ?? line.discount ?? 0
-          );
-          const qty = line.qty || line.quantity || 1;
-          const unitCost = toAmount(line.unit_cost);
-          const lineTotal = toAmount(line.amount) || Number(unitCost * qty) || 0;
-
-          const rawTaxAmt1 =
-            line.tax_amount1 ?? line.taxAmount1 ?? parent.tax_amount1 ?? parentTax1?.amount ?? parentTax1?.tax_amount ?? "";
-          let taxPerc1 = line.tax_percent1 ?? line.taxPercent1 ?? parentTax1?.percent ?? parentTax1?.rate ?? "";
-          // If percent missing but raw value present and looks like percent (<=100), treat raw as percent.
-          if (!taxPerc1 && rawTaxAmt1 !== "" && rawTaxAmt1 !== null && lineTotal > 0) {
-            const candidate = Number(rawTaxAmt1);
-            if (!Number.isNaN(candidate) && candidate > 0 && candidate <= 100) {
-              taxPerc1 = candidate;
-            }
+      // --- Bills one-sheet ---
+      if (type === "bills") {
+        const resolveLineArray = (parent) => {
+          if (!parent) return [];
+          if (Array.isArray(parent.line_items_array)) return parent.line_items_array;
+          if (Array.isArray(parent.line_items_raw)) return parent.line_items_raw;
+          if (Array.isArray(parent.line_items)) return parent.line_items;
+          if (Array.isArray(parent.bill_lines_raw)) return parent.bill_lines_raw;
+          if (Array.isArray(parent.bill_lines)) return parent.bill_lines;
+          if (Array.isArray(parent.lines)) return parent.lines;
+          return extractLineItems("bills", [parent]) || [];
+        };
+        const toAmount = (value) => {
+          if (value && typeof value === "object") return Number(value.amount ?? value.total ?? value.value ?? 0);
+          return Number(value ?? 0);
+        };
+        const parseDate = (value) => {
+          if (!value) return null;
+          const normalized = String(value).trim();
+          const isoLike = /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/;
+          const isoMatch = isoLike.exec(normalized);
+          if (isoMatch) {
+            const [, y, m, d, hh = "0", mm = "0", ss = "0"] = isoMatch;
+            return new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss));
           }
-          const taxAmt1 =
-            taxPerc1 !== ""
-              ? round2(lineTotal * (Number(taxPerc1) || 0) / 100)
-              : rawTaxAmt1 !== "" && rawTaxAmt1 !== null
-              ? toNumberOrZero(rawTaxAmt1)
-              : "";
-
-          const rawTaxAmt2 =
-            line.tax_amount2 ?? line.taxAmount2 ?? parent.tax_amount2 ?? parentTax2?.amount ?? parentTax2?.tax_amount ?? "";
-          let taxPerc2 = line.tax_percent2 ?? line.taxPercent2 ?? parentTax2?.percent ?? parentTax2?.rate ?? "";
-          if (!taxPerc2 && rawTaxAmt2 !== "" && rawTaxAmt2 !== null && lineTotal > 0) {
-            const candidate = Number(rawTaxAmt2);
-            if (!Number.isNaN(candidate) && candidate > 0 && candidate <= 100) {
-              taxPerc2 = candidate;
-            }
+          const match = /(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/.exec(normalized);
+          if (match) {
+            const [, month, day, year, hour = "0", minute = "0"] = match;
+            return new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
           }
-          const taxAmt2 =
-            taxPerc2 !== ""
-              ? round2(lineTotal * (Number(taxPerc2) || 0) / 100)
-              : rawTaxAmt2 !== "" && rawTaxAmt2 !== null
-              ? toNumberOrZero(rawTaxAmt2)
-              : "";
+          const direct = new Date(normalized);
+          if (!Number.isNaN(direct.getTime())) return direct;
+          return null;
+        };
+        const formatDate = (value, withTime = false) => {
+          const d = parseDate(value);
+          if (!d) return "";
+          const datePart = `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+          if (!withTime) return datePart;
+          const hh = String(d.getHours()).padStart(2, "0");
+          const mm = String(d.getMinutes()).padStart(2, "0");
+          return `${datePart} ${hh}:${mm}`;
+        };
 
-          const clientOrg =
-            parent.client_name ||
-            parent.organization ||
-            parent.current_organization ||
-            parent.client?.organization ||
-            parent.client?.display_name ||
-            parent.client?.name ||
-            parent.customer?.organization ||
-            "";
+        const columns = [
+          "amount",
+          "bill_number",
+          "created_at",
+          "currency_code",
+          "due_date",
+          "due_offset_days",
+          "issue_date",
+          "outstanding",
+          "overall_category",
+          "paid",
+          "status",
+          "tax_amount",
+          "total_amount",
+          "line_items",
+          "parent_id",
+          "vendorid",
+          "description",
+          "line_description",
+          "quantity",
+          "category",
+          "tax_amount1",
+          "tax_amount2",
+          "tax_name1",
+          "tax_name2",
+          "tax_percent1",
+          "tax_percent2",
+          "line_total_amount",
+          "unit_cost",
+          "line_date",
+        ];
 
-          rows.push({
-            "Invoice ID": parent.invoiceid || parent.id || "",
-            id: parent.id || parent.invoiceid || "",
-            fname:
-              parent.fname ||
-              parent.client?.fname ||
-              parent.client?.name ||
-              parent.customer?.fname ||
-              "",
-            "Invoice Number": parent.invoice_number || parent.number || "",
-            "Client/Organization": clientOrg,
-            "Date": toDate(parent.create_date),
-            "Due Date": toDate(parent.due_date),
-            "Item Name": line.name || "",
-            "Item Description": line.description || parent.description || "",
-            Qty: qty,
-            "Unit cost": unitCost,
-            "Total Amount": lineTotal,
-            "Tax Name 1":
-              line.taxName1 ??
-              line.tax_name1 ??
-              parent.tax_name1 ??
-              parentTax1?.name ??
-              parentTax1?.tax_name ??
-              "",
-            "Tax Amount 1": taxAmt1,
-            "Tax Percentage1": taxPerc1,
-            "Tax Name 2":
-              line.taxName2 ??
-              line.tax_name2 ??
-              parent.tax_name2 ??
-              parentTax2?.name ??
-              parentTax2?.tax_name ??
-              "",
-            "Tax Amount 2": taxAmt2,
-            "Tax Percentage2": taxPerc2,
-            discount_rate: (line.discount?.rate ?? parent.discount?.rate ?? lineDiscount) || "",
-            discount_type: line.discount?.type ?? parent.discount?.type ?? "",
-            Total: toAmount(parent.amount),
+        if (!parents.length) {
+          setData({ success: true, total: 0, data: [] });
+          setProgress("No bills found for the selected range/account.");
+          updateCount(setTypeCounts, "Bill sheet", 0);
+          await finishLineExtraction();
+          return;
+        }
+
+        const rows = [];
+        parents.forEach((parent) => {
+          const parentLines = resolveLineArray(parent);
+          parentLines.forEach((line) => {
+            rows.push({
+              amount: toAmount(parent.amount),
+              bill_number: parent.bill_number,
+              created_at: formatDate(parent.created_at || parent.create_date, true),
+              currency_code: parent.currency_code,
+              due_date: formatDate(parent.due_date),
+              due_offset_days: Number(parent.due_offset_days ?? 0),
+              issue_date: formatDate(parent.issue_date),
+              outstanding: toAmount(parent.outstanding),
+              overall_category: parent.overall_category || line.category?.category || line.category || "",
+              paid: toAmount(parent.paid),
+              status: parent.status,
+              tax_amount: toAmount(parent.tax_amount),
+              total_amount: toAmount(parent.total_amount),
+              line_items: parentLines.length,
+              parent_id: parent.id ?? parent.billid ?? parent.bill_id,
+              vendorid:
+                parent.vendorid ||
+                parent.vendor_id ||
+                parent.vendor?.id ||
+                parent.vendor?.vendorid ||
+                parent.vendor?.vendor_id ||
+                parent.vendor?.accountid ||
+                parent.vendor?.account_id ||
+                parent.vendor?.userid ||
+                parent.vendor?.uuid ||
+                parent.bill_vendor?.id ||
+                parent.bill_vendor?.vendor_id ||
+                "",
+              description: parent.description || "",
+              line_description: line.description || line.name || "",
+              quantity: line.quantity || line.qty || 1,
+              category: line.category?.category || line.category || "",
+              tax_amount1: line.tax_amount1 ?? "",
+              tax_amount2: line.tax_amount2 ?? "",
+              tax_name1: line.tax_name1 ?? "",
+              tax_name2: line.tax_name2 ?? "",
+              tax_percent1: line.tax_percent1 ?? "",
+              tax_percent2: line.tax_percent2 ?? "",
+              line_total_amount: toAmount(line.total_amount ?? line.total),
+              unit_cost: toAmount(line.unit_cost),
+              line_date: formatDate(line.date || parent.issue_date),
+            });
           });
         });
-      });
 
-      setData({
-        success: true,
-        total: rows.length,
-        data: rows,
-      });
-
-      setProgress(`📄 Invoices ready: ${rows.length} rows`);
-      updateCount(setTypeCounts, "Invoice sheet", rows.length);
-    } catch (err) {
-      console.error("❌ Invoice sheet failed:", err);
-      alert(`Invoice line export failed: ${formatAxiosError(err)}`);
-    }
-
-    setLoading(false);
-  };
-
-  /* ---------------- ESTIMATE ONE-SHEET (PARENT + LINES) ---------------- */
-  const extractEstimateSheet = async () => {
-    if (!start || !end) return alert("Select date range!");
-    if (!accountId) return alert("Account ID missing. Update business first.");
-
-    setLoading(true);
-    setProgress("⏳ Fetching estimates + line items...");
-    setData(null);
-
-    const columns = [
-      "accepted",
-      "amount",
-      "code",
-      "create_date",
-      "currency_code",
-      "current_organization",
-      "customerid",
-      "description",
-      "discount_total",
-      "discount_value",
-      "display_status",
-      "estimate_number",
-      "estimateid",
-      "id",
-      "notes",
-      "organization",
-      "ownerid",
-      "po_number",
-      "rich_proposal",
-      "status",
-      "terms",
-      "line_items",
-      "parent_id",
-      "parent_number",
-      "line_date",
-      "line_description",
-      "qty",
-      "unit_cost",
-      "total",
-      "Tax Amount 1",
-      "Tax Amount 2",
-      "Tax Name 1",
-      "Tax Name 2",
-      "Line item",
-    ];
-
-    try {
-      const res = await axios.get(`${backend}/api/extract`, {
-        params: {
-          start_date: toDateParam(start),
-          end_date: toDateParam(end),
-          type: "estimates",
-          account_id: accountId,
-          business_id: businessId,
-          business_uuid: businessUUID,
-          include_raw: true,
-        },
-        timeout: 180000,
-      });
-
-      setRaw(res.data);
-      const parents = filterByDateRange(res.data?.data || [], start, end);
-      const lines = extractLineItems("estimates", parents);
-
-      const parentById = Object.fromEntries(
-        parents
-          .filter((p) => p && (p.estimateid || p.id))
-          .map((p) => [p.estimateid || p.id, p])
-      );
-
-      const rows = lines.map((line) => {
-        const parent = parentById[line.parent_id] || {};
-        const parentLines = Array.isArray(parent.line_items)
-          ? parent.line_items
-          : Array.isArray(parent.lines)
-          ? parent.lines
-          : [];
-
-        return {
-          accepted: parent.accepted,
-          amount: parent.amount?.amount ?? parent.amount ?? "",
-          code: parent.amount?.code ?? parent.currency_code ?? "",
-          create_date: parent.create_date,
-          currency_code: parent.currency_code,
-          current_organization: parent.current_organization,
-          customerid: parent.customerid,
-          description: parent.description,
-          discount_total: parent.discount_total?.amount ?? parent.discount_total ?? "",
-          discount_value: parent.discount_value,
-          display_status: parent.display_status,
-          estimate_number: parent.estimate_number,
-          estimateid: parent.estimateid,
-          id: parent.id,
-          notes: parent.notes,
-          organization: parent.organization,
-          ownerid: parent.ownerid,
-          po_number: parent.po_number,
-          rich_proposal: parent.rich_proposal,
-          status: parent.status,
-          terms: parent.terms,
-          line_items: parentLines.length,
-          parent_id: line.parent_id,
-          parent_number: line.parent_number,
-          line_date: line.date,
-          line_description: line.description,
-          qty: line.qty,
-          unit_cost: line.unit_cost,
-          total: line.total,
-          "Tax Amount 1": line.tax1 ?? "",
-          "Tax Amount 2": line.tax2 ?? "",
-          "Tax Name 1": line.taxName1 ?? line.tax_name1 ?? "",
-          "Tax Name 2": line.taxName2 ?? line.tax_name2 ?? "",
-          "Line item": line.name || line.description || "",
-        };
-      });
-
-      setData({
-        success: true,
-        total: rows.length,
-        data: rows,
-      });
-
-      setProgress(`📄 Estimates ready: ${rows.length} rows`);
-      updateCount(setTypeCounts, "Estimate sheet", rows.length);
-    } catch (err) {
-      console.error("❌ Estimate sheet failed:", err);
-      alert(`Estimate line export failed: ${formatAxiosError(err)}`);
-    }
-
-    setLoading(false);
-  };
-
-  /* ---------------- BILL ONE-SHEET (PARENT + LINES) ---------------- */
-  const extractBillSheet = async () => {
-    if (!start || !end) return alert("Select date range!");
-    if (!accountId) return alert("Account ID missing. Update business first.");
-
-    const resolveLineArray = (parent) => {
-      if (!parent) return [];
-      if (Array.isArray(parent.line_items)) return parent.line_items;
-      if (Array.isArray(parent.lines)) return parent.lines;
-      if (Array.isArray(parent.bill_lines)) return parent.bill_lines;
-      return [];
-    };
-    const toAmount = (value) => {
-      if (value && typeof value === "object") return Number(value.amount ?? value.total ?? value.value ?? 0);
-      return Number(value ?? 0);
-    };
-    const parseDate = (value) => {
-      if (!value) return null;
-      const normalized = String(value).trim();
-      const isoLike = /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/;
-      const isoMatch = isoLike.exec(normalized);
-      if (isoMatch) {
-        const [, y, m, d, hh = "0", mm = "0", ss = "0"] = isoMatch;
-        return new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss));
-      }
-      const match = /(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/.exec(normalized);
-      if (match) {
-        const [, month, day, year, hour = "0", minute = "0"] = match;
-        return new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
-      }
-      const direct = new Date(normalized);
-      if (!Number.isNaN(direct.getTime())) return direct;
-      return null;
-    };
-    const formatDate = (value, withTime = false) => {
-      const d = parseDate(value);
-      if (!d) return "";
-      const datePart = `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
-      if (!withTime) return datePart;
-      const hh = String(d.getHours()).padStart(2, "0");
-      const mm = String(d.getMinutes()).padStart(2, "0");
-      return `${datePart} ${hh}:${mm}`;
-    };
-
-    setLoading(true);
-    setProgress("⏳ Fetching bills + line items...");
-    setData(null);
-
-    const columns = [
-      "amount",
-      "bill_number",
-      "created_at",
-      "currency_code",
-      "due_date",
-      "due_offset_days",
-      "issue_date",
-      "outstanding",
-      "overall_category",
-      "paid",
-      "status",
-      "tax_amount",
-      "total_amount",
-      "line_items",
-      "parent_id",
-      "vendorid",
-      "description",
-      "line_description",
-      "quantity",
-      "category",
-      "tax_amount1",
-      "tax_amount2",
-      "tax_name1",
-      "tax_name2",
-      "tax_percent1",
-      "tax_percent2",
-      "line_total_amount",
-      "unit_cost",
-      "line_date",
-    ];
-
-    try {
-      const res = await axios.get(`${backend}/api/extract`, {
-        params: {
-          start_date: toDateParam(start),
-          end_date: toDateParam(end),
-          type: "bills",
-          account_id: accountId,
-          business_id: businessId,
-          business_uuid: businessUUID,
-          include_raw: true,
-        },
-        timeout: 300000,
-      });
-
-      setRaw(res.data);
-      const parents = filterByDateRange(res.data?.data || [], start, end);
-      if (!parents.length) {
-        setData({ success: true, total: 0, data: [] });
-        setProgress("⚠️ No bills found for the selected range/account.");
-        updateCount(setTypeCounts, "Bill sheet", 0);
-        setLoading(false);
+        setData({ success: true, total: rows.length, data: rows, headers: columns });
+        setProgress(`Bills ready: ${rows.length} rows`);
+        updateCount(setTypeCounts, "Bill sheet", rows.length);
+        await finishLineExtraction();
         return;
       }
-      const rows = [];
 
-      parents.forEach((parent) => {
-        const parentLines = resolveLineArray(parent);
-        parentLines.forEach((line) => {
-          rows.push({
-            amount: toAmount(parent.amount),
-            bill_number: parent.bill_number,
-            created_at: formatDate(parent.created_at || parent.create_date, true),
-            currency_code: parent.currency_code,
-            due_date: formatDate(parent.due_date),
-            due_offset_days: Number(parent.due_offset_days ?? 0),
-            issue_date: formatDate(parent.issue_date),
-            outstanding: toAmount(parent.outstanding),
-            overall_category: parent.overall_category || line.category?.category || line.category || "",
-            paid: toAmount(parent.paid),
-            status: parent.status,
-            tax_amount: toAmount(parent.tax_amount),
-            total_amount: toAmount(parent.total_amount),
-            line_items: parentLines.length,
-            parent_id: parent.id ?? parent.billid ?? parent.bill_id,
-            vendorid:
+      // --- Expenses one-sheet ---
+      if (type === "expenses") {
+        const resolveLineArray = (parent) => {
+          if (!parent) return [];
+          if (Array.isArray(parent.line_items_array)) return parent.line_items_array;
+          if (Array.isArray(parent.bill_lines)) return parent.bill_lines;
+          if (Array.isArray(parent.line_items)) return parent.line_items;
+          if (Array.isArray(parent.lines)) return parent.lines;
+          return [];
+        };
+        const toAmount = (value) => {
+          if (value && typeof value === "object") return Number(value.amount ?? value.total ?? value.value ?? 0);
+          return Number(value ?? 0);
+        };
+        const amtOrBlank = (v) => (v === null || v === undefined || v === "" ? "" : toAmount(v));
+
+        const columns = [
+          "vendor",
+          "vendorid",
+          "category",
+          "categoryid",
+          "date",
+          "line_date",
+          "taxAmount1",
+          "taxAmount2",
+          "taxName1",
+          "taxName2",
+          "taxPercent1",
+          "taxPercent2",
+          "amount",
+          "notes",
+        ];
+
+        const rows = [];
+
+        const taxTuple = (line, parent, idx) => {
+          const taxesArr =
+            (Array.isArray(line.taxes) && line.taxes) ||
+            (Array.isArray(line.tax_summary) && line.tax_summary) ||
+            (Array.isArray(parent.tax_summary) && parent.tax_summary) ||
+            [];
+          const t = taxesArr[idx] || {};
+          const amount = t.amount ?? t.tax_amount ?? t.value ?? null;
+          const percent = t.percent ?? t.rate ?? null;
+          const name = t.name ?? t.tax_name ?? "";
+          return { amount, percent, name };
+        };
+
+        parents.forEach((parent) => {
+          const parentLines = resolveLineArray(parent);
+          parentLines.forEach((line) => {
+            const t1 = taxTuple(line, parent, 0);
+            const t2 = taxTuple(line, parent, 1);
+
+            const taxAmount1 =
+              t1.amount != null
+                ? amtOrBlank(t1.amount)
+                : amtOrBlank(line.tax_amount1 ?? line.taxAmount1 ?? parent.tax_amount1 ?? "");
+            const taxAmount2 =
+              t2.amount != null
+                ? amtOrBlank(t2.amount)
+                : amtOrBlank(line.tax_amount2 ?? line.taxAmount2 ?? parent.tax_amount2 ?? "");
+            const taxName1 = t1.name || line.tax_name1 || line.taxName1 || parent.tax_name1 || "";
+            const taxName2 = t2.name || line.tax_name2 || line.taxName2 || parent.tax_name2 || "";
+            const taxPercent1 = t1.percent ?? line.tax_percent1 ?? line.taxPercent1 ?? parent.tax_percent1 ?? "";
+            const taxPercent2 = t2.percent ?? line.tax_percent2 ?? line.taxPercent2 ?? parent.tax_percent2 ?? "";
+            const amount = toAmount(line.total ?? line.total_amount ?? line.amount ?? parent.amount);
+            const category =
+              parent.category_name ||
+              line.category?.category ||
+              line.category ||
+              parent.overall_category ||
+              "";
+            const lineDesc = line.name || line.description || parent.notes || category || "";
+            const categoryId =
+              line.category_id ||
+              line.categoryid ||
+              line.category?.categoryid ||
+              line.category?.id ||
+              line.category?.category_id ||
+              parent.category?.id ||
+              parent.category?.categoryid ||
+              parent.categoryid ||
+              parent.category_id ||
+              parent.overall_category_id ||
+              parent.overall_categoryid ||
+              "";
+            const vendorId =
               parent.vendorid ||
               parent.vendor_id ||
               parent.vendor?.id ||
@@ -1046,212 +913,360 @@ function App() {
               parent.vendor?.account_id ||
               parent.vendor?.userid ||
               parent.vendor?.uuid ||
-              parent.bill_vendor?.id ||
-              parent.bill_vendor?.vendor_id ||
-              "",
-            description: parent.description || "",
-            line_description: line.description || line.name || "",
-            quantity: line.quantity || line.qty || 1,
-            category: line.category?.category || line.category || "",
-            tax_amount1: line.tax_amount1 ?? "",
-            tax_amount2: line.tax_amount2 ?? "",
-            tax_name1: line.tax_name1 ?? "",
-            tax_name2: line.tax_name2 ?? "",
-            tax_percent1: line.tax_percent1 ?? "",
-            tax_percent2: line.tax_percent2 ?? "",
-            line_total_amount: toAmount(line.total_amount ?? line.total),
-            unit_cost: toAmount(line.unit_cost),
-            line_date: formatDate(line.date || parent.issue_date),
+              "";
+            const dateVal =
+              line.date ||
+              parent.date ||
+              parent.created_at ||
+              parent.updated_at ||
+              parent.create_date ||
+              parent.transaction_date ||
+              "";
+            const lineDate = line.date || parent.date || "";
+            const notes = parent.notes || lineDesc || "";
+
+            rows.push({
+              vendor: parent.vendor || "",
+              vendorid: vendorId,
+              category,
+              categoryid: categoryId,
+              date: dateVal,
+              line_date: lineDate,
+              taxAmount1,
+              taxAmount2,
+              taxName1,
+              taxName2,
+              taxPercent1,
+              taxPercent2,
+              amount,
+              notes,
+            });
           });
         });
-      });
 
-      setData({
-        success: true,
-        total: rows.length,
-        data: rows,
-        headers: columns,
-      });
+        setData({ success: true, total: rows.length, data: rows, headers: columns });
+        setProgress(`Expenses ready: ${rows.length} rows`);
+        updateCount(setTypeCounts, "Expense sheet", rows.length);
+        await finishLineExtraction();
+        return;
+      }
 
-      setProgress(`📄 Bills ready: ${rows.length} rows`);
-      updateCount(setTypeCounts, "Bill sheet", rows.length);
-    } catch (err) {
-      console.error("❌ Bill sheet failed:", err);
-      alert(`Bill line export failed: ${formatAxiosError(err)}`);
-    }
+      // --- Bill payments (per payment row) ---
+      if (type === "bill_payments") {
+        const toAmount = (value) => {
+          if (value && typeof value === "object") return Number(value.amount ?? value.total ?? value.value ?? 0);
+          return Number(value ?? 0);
+        };
+        const toDate = (val) => {
+          if (!val) return "";
+          const d = new Date(val);
+          if (Number.isNaN(d.getTime())) return "";
+          return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+        };
 
-    setLoading(false);
-  };
-
-  /* ---------------- EXPENSE ONE-SHEET (PARENT + LINES) ---------------- */
-  const extractExpenseSheet = async () => {
-    if (!start || !end) return alert("Select date range!");
-    if (!accountId) return alert("Account ID missing. Update business first.");
-
-    const resolveLineArray = (parent) => {
-      if (!parent) return [];
-      if (Array.isArray(parent.line_items_array)) return parent.line_items_array;
-      if (Array.isArray(parent.bill_lines)) return parent.bill_lines;
-      if (Array.isArray(parent.line_items)) return parent.line_items;
-      if (Array.isArray(parent.lines)) return parent.lines;
-      return [];
-    };
-    const toAmount = (value) => {
-      if (value && typeof value === "object") return Number(value.amount ?? value.total ?? value.value ?? 0);
-      return Number(value ?? 0);
-    };
-    const amtOrBlank = (v) => (v === null || v === undefined || v === "" ? "" : toAmount(v));
-
-    setLoading(true);
-    setProgress("⏳ Fetching expenses + line items...");
-    setData(null);
-
-    const columns = [
-      "vendor",
-      "vendorid",
-      "category",
-      "categoryid",
-      "date",
-      "line_date",
-      "taxAmount1",
-      "taxAmount2",
-      "taxName1",
-      "taxName2",
-      "taxPercent1",
-      "taxPercent2",
-      "amount",
-      "notes",
-    ];
-
-    try {
-      const res = await axios.get(`${backend}/api/extract`, {
-        params: {
-          start_date: toDateParam(start),
-          end_date: toDateParam(end),
-          type: "expenses",
-          account_id: accountId,
-          business_id: businessId,
-          business_uuid: businessUUID,
-          include_raw: true,
-        },
-        timeout: 180000,
-      });
-
-      setRaw(res.data);
-      const parents = res.data?.data || [];
-      const rows = [];
-
-      const taxTuple = (line, parent, idx) => {
-        const taxesArr =
-          (Array.isArray(line.taxes) && line.taxes) ||
-          (Array.isArray(line.tax_summary) && line.tax_summary) ||
-          (Array.isArray(parent.tax_summary) && parent.tax_summary) ||
-          [];
-        const t = taxesArr[idx] || {};
-        const amount = t.amount ?? t.tax_amount ?? t.value ?? null;
-        const percent = t.percent ?? t.rate ?? null;
-        const name = t.name ?? t.tax_name ?? "";
-        return { amount, percent, name };
-      };
-
-      parents.forEach((parent) => {
-        const parentLines = resolveLineArray(parent);
-        parentLines.forEach((line) => {
-          const t1 = taxTuple(line, parent, 0);
-          const t2 = taxTuple(line, parent, 1);
-
-          const taxAmount1 =
-            t1.amount != null
-              ? amtOrBlank(t1.amount)
-              : amtOrBlank(line.tax_amount1 ?? line.taxAmount1 ?? parent.tax_amount1 ?? "");
-          const taxAmount2 =
-            t2.amount != null
-              ? amtOrBlank(t2.amount)
-              : amtOrBlank(line.tax_amount2 ?? line.taxAmount2 ?? parent.tax_amount2 ?? "");
-          const taxName1 = t1.name || line.tax_name1 || line.taxName1 || parent.tax_name1 || "";
-          const taxName2 = t2.name || line.tax_name2 || line.taxName2 || parent.tax_name2 || "";
-          const taxPercent1 = t1.percent ?? line.tax_percent1 ?? line.taxPercent1 ?? parent.tax_percent1 ?? "";
-          const taxPercent2 = t2.percent ?? line.tax_percent2 ?? line.taxPercent2 ?? parent.tax_percent2 ?? "";
-          const amount = toAmount(line.total ?? line.total_amount ?? line.amount ?? parent.amount);
-          const category =
-            parent.category_name ||
-            line.category?.category ||
-            line.category ||
-            parent.overall_category ||
+        const rows = parents.map((p) => {
+          const amount = toAmount(p.amount);
+          const billNum =
+            p.bill_number ||
+            p.bill?.bill_number ||
+            p.bill?.number ||
+            p.bill?.id ||
+            p.billid ||
             "";
-          const lineDesc = line.name || line.description || parent.notes || category || "";
-          const categoryId =
-            line.category_id ||
-            line.categoryid ||
-            line.category?.categoryid ||
-            line.category?.id ||
-            line.category?.category_id ||
-            parent.category?.id ||
-            parent.category?.categoryid ||
-            parent.categoryid ||
-            parent.category_id ||
-            parent.overall_category_id ||
-            parent.overall_categoryid ||
-            "";
-          const vendorId =
-            parent.vendorid ||
-            parent.vendor_id ||
-            parent.vendor?.id ||
-            parent.vendor?.vendorid ||
-            parent.vendor?.vendor_id ||
-            parent.vendor?.accountid ||
-            parent.vendor?.account_id ||
-            parent.vendor?.userid ||
-            parent.vendor?.uuid ||
-            "";
-          const dateVal =
-            line.date ||
-            parent.date ||
-            parent.created_at ||
-            parent.updated_at ||
-            parent.create_date ||
-            parent.transaction_date ||
-            "";
-          const lineDate = line.date || parent.date || "";
-          const notes = parent.notes || lineDesc || "";
-
-          rows.push({
-            vendor: parent.vendor || "",
-            vendorid: vendorId,
-            category,
-            categoryid: categoryId,
-            date: dateVal,
-            line_date: lineDate,
-            taxAmount1,
-            taxAmount2,
-            taxName1,
-            taxName2,
-            taxPercent1,
-            taxPercent2,
+          return {
+            payment_id: p.id || p.paymentid || "",
+            bill_number: billNum,
             amount,
-            notes,
+            currency_code: p.amount?.code || p.currency_code || "",
+            payment_date: toDate(p.payment_date || p.date || p.created_at),
+            status: p.status || "",
+            method: p.payment_method || p.method || "",
+            notes: p.notes || "",
+            bill_id: p.bill?.id || p.bill_id || "",
+          };
+        });
+
+        setData({ success: true, total: rows.length, data: rows });
+        setProgress(`Bill payments ready: ${rows.length} rows`);
+        updateCount(setTypeCounts, "Bill payments", rows.length);
+        await finishLineExtraction();
+        return;
+      }
+
+      // --- Invoices one-sheet ---
+      if (type === "invoices") {
+        const resolveLineArray = (parent) => {
+          if (!parent) return [];
+          if (Array.isArray(parent.line_items)) return parent.line_items;
+          if (Array.isArray(parent.lines)) return parent.lines;
+          return [];
+        };
+        const toAmount = (value) => {
+          if (value && typeof value === "object") return Number(value.amount ?? value.total ?? value.value ?? 0);
+          return Number(value ?? 0);
+        };
+
+        const toDate = (val) => {
+          if (!val) return "";
+          const d = new Date(val);
+          if (Number.isNaN(d.getTime())) return "";
+          return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+        };
+
+        const columns = [
+          "Invoice ID",
+          "id",
+          "fname",
+          "Invoice Number",
+          "Client/Organization",
+          "Date",
+          "Due Date",
+          "Item Name",
+          "Item Description",
+          "Qty",
+          "Unit cost",
+          "Total Amount",
+          "Tax Name 1",
+          "Tax Amount 1",
+          "Tax Percentage1",
+          "Tax Name 2",
+          "Tax Amount 2",
+          "Tax Percentage2",
+          "discount_rate",
+          "discount_type",
+          "Total",
+        ];
+
+        const rows = [];
+
+        parents.forEach((parent) => {
+          const parentLines = resolveLineArray(parent);
+          const parentTax1 =
+            (Array.isArray(parent.taxes) && parent.taxes[0]) || parent.tax_summary?.[0] || null;
+          const parentTax2 =
+            (Array.isArray(parent.taxes) && parent.taxes[1]) || parent.tax_summary?.[1] || null;
+          const parentDiscount = toNumberOrZero(
+            parent.discount?.amount ??
+              parent.discount?.rate ??
+              parent.discount_value ??
+              parent.discount_total?.amount ??
+              parent.discount_total ??
+              parent.discount ??
+              0
+          );
+          parentLines.forEach((line) => {
+            const lineDiscount = toNumberOrZero(
+              line.discount?.amount ?? line.discount?.rate ?? line.discount ?? 0
+            );
+            const qty = line.qty || line.quantity || 1;
+            const unitCost = toAmount(line.unit_cost);
+            const lineTotal = toAmount(line.amount) || Number(unitCost * qty) || 0;
+
+            const rawTaxAmt1 =
+              line.tax_amount1 ?? line.taxAmount1 ?? parent.tax_amount1 ?? parentTax1?.amount ?? parentTax1?.tax_amount ?? "";
+            let taxPerc1 = line.tax_percent1 ?? line.taxPercent1 ?? parentTax1?.percent ?? parentTax1?.rate ?? "";
+            if (!taxPerc1 && rawTaxAmt1 !== "" && rawTaxAmt1 !== null && lineTotal > 0) {
+              const candidate = Number(rawTaxAmt1);
+              if (!Number.isNaN(candidate) && candidate > 0 && candidate <= 100) {
+                taxPerc1 = candidate;
+              }
+            }
+            const taxAmt1 =
+              taxPerc1 !== ""
+                ? round2((lineTotal * (Number(taxPerc1) || 0)) / 100)
+                : rawTaxAmt1 !== "" && rawTaxAmt1 !== null
+                ? toNumberOrZero(rawTaxAmt1)
+                : "";
+
+            const rawTaxAmt2 =
+              line.tax_amount2 ?? line.taxAmount2 ?? parent.tax_amount2 ?? parentTax2?.amount ?? parentTax2?.tax_amount ?? "";
+            let taxPerc2 = line.tax_percent2 ?? line.taxPercent2 ?? parentTax2?.percent ?? parentTax2?.rate ?? "";
+            if (!taxPerc2 && rawTaxAmt2 !== "" && rawTaxAmt2 !== null && lineTotal > 0) {
+              const candidate = Number(rawTaxAmt2);
+              if (!Number.isNaN(candidate) && candidate > 0 && candidate <= 100) {
+                taxPerc2 = candidate;
+              }
+            }
+            const taxAmt2 =
+              taxPerc2 !== ""
+                ? round2((lineTotal * (Number(taxPerc2) || 0)) / 100)
+                : rawTaxAmt2 !== "" && rawTaxAmt2 !== null
+                ? toNumberOrZero(rawTaxAmt2)
+                : "";
+
+            const clientOrg =
+              parent.client_name ||
+              parent.organization ||
+              parent.current_organization ||
+              parent.client?.organization ||
+              parent.client?.display_name ||
+              parent.client?.name ||
+              parent.customer?.organization ||
+              "";
+
+            rows.push({
+              "Invoice ID": parent.invoiceid || parent.id || "",
+              id: parent.id || parent.invoiceid || "",
+              fname:
+                parent.fname ||
+                parent.client?.fname ||
+                parent.client?.name ||
+                parent.customer?.fname ||
+                "",
+              "Invoice Number": parent.invoice_number || parent.number || "",
+              "Client/Organization": clientOrg,
+              "Date": toDate(parent.create_date),
+              "Due Date": toDate(parent.due_date),
+              "Item Name": line.name || "",
+              "Item Description": line.description || parent.description || "",
+              Qty: qty,
+              "Unit cost": unitCost,
+              "Total Amount": lineTotal,
+              "Tax Name 1":
+                line.taxName1 ??
+                line.tax_name1 ??
+                parent.tax_name1 ??
+                parentTax1?.name ??
+                parentTax1?.tax_name ??
+                "",
+              "Tax Amount 1": taxAmt1,
+              "Tax Percentage1": taxPerc1,
+              "Tax Name 2":
+                line.taxName2 ??
+                line.tax_name2 ??
+                parent.tax_name2 ??
+                parentTax2?.name ??
+                parentTax2?.tax_name ??
+                "",
+              "Tax Amount 2": taxAmt2,
+              "Tax Percentage2": taxPerc2,
+              discount_rate: (line.discount?.rate ?? parent.discount?.rate ?? lineDiscount) || "",
+              discount_type: line.discount?.type ?? parent.discount?.type ?? "",
+              Total: toAmount(parent.amount),
+            });
           });
         });
-      });
 
-      setData({
-        success: true,
-        total: rows.length,
-        data: rows,
-        headers: columns,
-      });
+        setData({ success: true, total: rows.length, data: rows });
+        setProgress(`Invoices ready: ${rows.length} rows`);
+        updateCount(setTypeCounts, "Invoice sheet", rows.length);
+        await finishLineExtraction();
+        return;
+      }
 
-      setProgress(`📄 Expenses ready: ${rows.length} rows`);
-      updateCount(setTypeCounts, "Expense sheet", rows.length);
+      // --- Estimates one-sheet ---
+      if (type === "estimates") {
+        const columns = [
+          "accepted",
+          "amount",
+          "code",
+          "create_date",
+          "currency_code",
+          "current_organization",
+          "customerid",
+          "description",
+          "discount_total",
+          "discount_value",
+          "display_status",
+          "estimate_number",
+          "estimateid",
+          "id",
+          "notes",
+          "organization",
+          "ownerid",
+          "po_number",
+          "rich_proposal",
+          "status",
+          "terms",
+          "line_items",
+          "parent_id",
+          "parent_number",
+          "line_date",
+          "line_description",
+          "qty",
+          "unit_cost",
+          "total",
+          "Tax Amount 1",
+          "Tax Amount 2",
+          "Tax Name 1",
+          "Tax Name 2",
+          "Line item",
+        ];
+
+        const lines = extractLineItems("estimates", parents);
+        const parentById = Object.fromEntries(
+          parents
+            .filter((p) => p && (p.estimateid || p.id))
+            .map((p) => [p.estimateid || p.id, p])
+        );
+
+        const rows = lines.map((line) => {
+          const parent = parentById[line.parent_id] || {};
+          const parentLines = Array.isArray(parent.line_items)
+            ? parent.line_items
+            : Array.isArray(parent.lines)
+            ? parent.lines
+            : [];
+
+          return {
+            accepted: parent.accepted,
+            amount: parent.amount?.amount ?? parent.amount ?? "",
+            code: parent.amount?.code ?? parent.currency_code ?? "",
+            create_date: parent.create_date,
+            currency_code: parent.currency_code,
+            current_organization: parent.current_organization,
+            customerid: parent.customerid,
+            description: parent.description,
+            discount_total: parent.discount_total?.amount ?? parent.discount_total ?? "",
+            discount_value: parent.discount_value,
+            display_status: parent.display_status,
+            estimate_number: parent.estimate_number,
+            estimateid: parent.estimateid,
+            id: parent.id,
+            notes: parent.notes,
+            organization: parent.organization,
+            ownerid: parent.ownerid,
+            po_number: parent.po_number,
+            rich_proposal: parent.rich_proposal,
+            status: parent.status,
+            terms: parent.terms,
+            line_items: parentLines.length,
+            parent_id: line.parent_id,
+            parent_number: line.parent_number,
+            line_date: line.date,
+            line_description: line.description,
+            qty: line.qty,
+            unit_cost: line.unit_cost,
+            total: line.total,
+            "Tax Amount 1": line.tax1 ?? "",
+            "Tax Amount 2": line.tax2 ?? "",
+            "Tax Name 1": line.taxName1 ?? line.tax_name1 ?? "",
+            "Tax Name 2": line.taxName2 ?? line.tax_name2 ?? "",
+            "Line item": line.name || line.description || "",
+          };
+        });
+
+        setData({ success: true, total: rows.length, data: rows });
+        setProgress(`Estimates ready: ${rows.length} rows`);
+        updateCount(setTypeCounts, "Estimate sheet", rows.length);
+        await finishLineExtraction();
+        return;
+      }
+
+      // Default: generic line item extraction
+      const lines = extractLineItems(type, parents);
+      setData({ success: true, total: lines.length, data: lines });
+      setProgress(`${toTitle(type)} line items: ${lines.length} rows`);
+      updateCount(setTypeCounts, `${toTitle(type)} line items`, lines.length);
+      await finishLineExtraction();
+      return;
     } catch (err) {
-      console.error("❌ Expense sheet failed:", err);
-      alert(`Expense line export failed: ${formatAxiosError(err)}`);
+      console.error("Line item extract failed:", err);
+      alert(`Line item extract failed: ${formatAxiosError(err)}`);
     }
 
     setLoading(false);
   };
-
-
 
   /* ---------------- CSV DOWNLOAD ---------------- */
   const downloadCSV = () => {
@@ -1275,11 +1290,13 @@ function App() {
 
   /* ---------------- PARSE TEST RESULTS ---------------- */
   const parsed = useMemo(
-    () => Object.fromEntries(Object.entries(endpointStatus).map(([k, v]) => [k, parseResult(v)])),
-    [endpointStatus]
+    () => Object.fromEntries(Object.entries(endpointsForUI).map(([k, v]) => [k, parseResult(v)])),
+    [endpointsForUI]
   );
 
   const summary = useMemo(() => {
+    if (!hasTestResults)
+      return { total: 0, ok: 0, empty: 0, error: 0, unsupported: 0 };
     const all = Object.values(parsed);
     const c = (k) => all.filter((x) => x.kind === k).length;
     return {
@@ -1295,6 +1312,31 @@ function App() {
     if (filter === "all") return Object.keys(parsed);
     return Object.keys(parsed).filter((k) => parsed[k].kind === filter);
   }, [parsed, filter]);
+
+  const sessionsForUI = useMemo(() => {
+    const seen = new Set();
+    const dedup = [];
+    for (const item of history || []) {
+      const name = (item.user?.name || "").trim();
+      if (!name || name.toLowerCase() === "unknown user") continue;
+      const key = item.user?.id || name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      dedup.push(item);
+    }
+    return dedup;
+  }, [history]);
+
+  const summarizeSession = (item) => {
+    const lastAction = Array.isArray(item.actions) ? item.actions[0] : null;
+    const extractCount = Array.isArray(item.actions)
+      ? item.actions.filter((a) => a.kind === "extract").length
+      : 0;
+    return {
+      lastAction,
+      extractCount,
+    };
+  };
 
   const formatAxiosError = (err) => {
     const status = err?.response?.status;
@@ -1332,6 +1374,13 @@ function App() {
           <img src={mmclogo} className="login-logo" />
           <h1>Login to FreshBooks</h1>
           <p className="tagline">Accurate • Automated • Fast Data Conversion</p>
+          <input
+            type="text"
+            placeholder="Your name (saved with history)"
+            value={customUserName}
+            onChange={(e) => setCustomUserName(e.target.value)}
+            className="login-input"
+          />
           <button className="primary-btn" onClick={authorize}>
             Login & Authorize
           </button>
@@ -1416,7 +1465,7 @@ function App() {
             <select value={type} onChange={(e) => setType(e.target.value)}>
               <option value="">Select Endpoint</option>
 
-              {Object.entries(endpointStatus).map(([key, val]) => {
+              {Object.entries(endpointsForUI).map(([key, val]) => {
                 const p = parseResult(val);
                 const disabled = p.kind === "unsupported";
                 return (
@@ -1440,35 +1489,6 @@ function App() {
           >
             📄 Extract Line Items
           </button>
-          <button
-            onClick={extractBillSheet}
-            className="secondary-btn"
-            style={{ marginTop: 10 }}
-          >
-            📑 Extract Bill Sheet
-          </button>
-          <button
-            onClick={extractExpenseSheet}
-            className="secondary-btn"
-            style={{ marginTop: 10 }}
-          >
-            🧾 Extract Expense Sheet
-          </button>
-          <button
-            onClick={extractInvoiceSheet}
-            className="secondary-btn"
-            style={{ marginTop: 10 }}
-          >
-            🧾 Extract Invoice Sheet
-          </button>
-          <button
-            onClick={extractEstimateSheet}
-            className="secondary-btn"
-            style={{ marginTop: 10 }}
-          >
-            📑 Extract Estimate Sheet
-          </button>
-
           <p>{progress}</p>
         </section>
       </div>
@@ -1568,6 +1588,98 @@ function App() {
           </ul>
         </section>
       )}
+
+      {/* ACTIVITY HISTORY */}
+      <section className="card">
+        <div className="flex-row">
+          <h2>🧾 Activity History</h2>
+          <button className="secondary-btn" onClick={fetchHistory} disabled={historyLoading}>
+            {historyLoading ? "Refreshing..." : "↻ Refresh"}
+          </button>
+        </div>
+        {historyLoading && <p>Loading history...</p>}
+        {!historyLoading && history.length === 0 && <p>No activity recorded yet.</p>}
+        {!historyLoading && history.length > 0 && (
+          <div className="history-table-wrapper">
+            <table className="data-table compact">
+              <thead>
+                <tr>
+                  <th>Event</th>
+                  <th>User</th>
+                  <th>When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sessionsForUI.slice(0, 25).map((item, idx) => {
+                  const { lastAction, extractCount } = summarizeSession(item);
+                  return (
+                  <tr
+                    key={item.id || idx}
+                    onClick={() => setSelectedHistory(item)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td>Session</td>
+                    <td>
+                      <div>{item.user?.name || "Unknown User"}</div>
+                      {item.user?.email ? <small>{item.user.email}</small> : null}
+                    </td>
+                    <td>{formatDateTime(item.timestamp)}</td>
+                  </tr>
+                );
+              })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {selectedHistory && (
+          <div className="history-detail">
+            <h4>Details</h4>
+            <p>
+              <b>User:</b> {selectedHistory.user?.name || "Unknown User"}
+            </p>
+            <p>
+              <b>Recent extracts:</b>{" "}
+              {Array.isArray(selectedHistory.actions)
+                ? selectedHistory.actions.filter((a) => a.kind === "extract").length
+                : 0}
+            </p>
+            {Array.isArray(selectedHistory.actions) && selectedHistory.actions.length > 0 && (
+              <div className="action-list">
+                {selectedHistory.actions
+                  .filter((a) => a.kind === "extract")
+                  .slice(0, 10)
+                  .map((action, idx) => {
+                    const businessLabel = selectedHistory.meta?.last_business || "";
+                    const rawFile =
+                      action.file_name || selectedHistory.meta?.last_file || "";
+                    const fileDisplay = businessLabel
+                      ? `${(action.type || "export").replace(/\s+/g, "_")}_${businessLabel}.csv`
+                      : rawFile || "—";
+                    const range = action.start_date
+                      ? `${action.start_date}${action.end_date ? ` → ${action.end_date}` : ""}`
+                      : "—";
+                    return (
+                      <div
+                        key={idx}
+                        className="action-item"
+                        style={{ padding: "8px 0", lineHeight: 1.4 }}
+                      >
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <b>{toTitle(action.type || "")}</b>
+                          <span>•</span>
+                          <span>{fileDisplay}</span>
+                        </div>
+                        <div style={{ color: "#cbd5e1" }}>
+                          Rows: {action.total ?? "—"} • {range} • {formatDateTime(action.at)}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
       {/* DATA TABLE */}
       {data && (

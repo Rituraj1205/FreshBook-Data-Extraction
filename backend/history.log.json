@@ -1,0 +1,340 @@
+[
+  {
+    "id": "session_1767337531042_qihu",
+    "event": "session",
+    "user": {
+      "id": null,
+      "name": "rituraj",
+      "email": null
+    },
+    "timestamp": "2026-01-02T07:07:25.115Z",
+    "actions": [
+      {
+        "kind": "extract",
+        "type": "invoices",
+        "start_date": "2025-01-01",
+        "end_date": "2026-01-02",
+        "account_id": "Kqgdq",
+        "business_id": "365737",
+        "business_uuid": "046cc001-0002-a988-2aef-189d029a4a11",
+        "total": 2047,
+        "line_mode": false,
+        "file_name": "invoices_365737.csv",
+        "at": "2026-01-02T07:07:25.115Z"
+      }
+    ],
+    "meta": {
+      "last_login": "2026-01-02T07:05:31.044Z",
+      "last_business": "FreshBooks (Conversions)",
+      "last_file": "invoices_365737.csv",
+      "account_id": "Kqgdq",
+      "business_id": 365737,
+      "business_uuid": "046cc001-0002-a988-2aef-189d029a4a11",
+      "last_type": "invoices",
+      "last_total": 2047,
+      "last_range": {
+        "start_date": "2025-01-01",
+        "end_date": "2026-01-02"
+      }
+    }
+  },
+  {
+    "id": "session_1767267471810_9fx5",
+    "event": "session",
+    "user": {
+      "id": null,
+      "name": "ronak",
+      "email": null
+    },
+    "timestamp": "2026-01-02T05:59:50.628Z",
+    "actions": [
+      {
+        "kind": "extract",
+        "type": "profile",
+        "start_date": "2025-01-01",
+        "end_date": "2026-01-01",
+        "account_id": "XykA60",
+        "business_id": "14225793",
+        "business_uuid": "bb459308-1e01-45bd-9f4c-c869bab5d7c9",
+        "total": 1,
+        "line_mode": false,
+        "file_name": "profile_14225793.csv",
+        "at": "2026-01-01T11:39:25.916Z"
+      }
+    ],
+    "meta": {
+      "last_login": "2026-01-02T05:59:50.628Z",
+      "last_business": "Plant Manager",
+      "last_file": "profile_14225793.csv",
+      "account_id": "XykA60",
+      "business_id": 14225793,
+      "business_uuid": "bb459308-1e01-45bd-9f4c-c869bab5d7c9",
+      "last_type": "profile",
+      "last_total": 1,
+      "last_range": {
+        "start_date": "2025-01-01",
+        "end_date": "2026-01-01"
+      }
+    }
+  },
+  {
+    "id": "session_1767265250795_opp6",
+    "event": "session",
+    "user": {
+      "id": null,
+      "name": "roshni",
+      "email": null
+    },
+    "timestamp": "2026-01-01T11:08:42.341Z",
+    "actions": [
+      {
+        "kind": "extract",
+        "type": "profile",
+        "start_date": "2025-01-01",
+        "end_date": "2026-01-01",
+        "account_id": "OdgoRV",
+        "business_id": "13164187",
+        "business_uuid": "e3acf085-55c2-42d2-a0c5-7f608d39099c",
+        "total": 1,
+        "line_mode": false,
+        "file_name": "profile_13164187.csv",
+        "at": "2026-01-01T11:08:42.341Z"
+      },
+      {
+        "kind": "extract",
+        "type": "bill_payments",
+        "start_date": "2025-01-01",
+        "end_date": "2026-01-01",
+        "account_id": "Kqgdq",
+        "business_id": "365737",
+        "business_uuid": "046cc001-0002-a988-2aef-189d029a4a11",
+        "total": 4,
+        "line_mode": false,
+        "file_name": "bill_payments_365737.csv",
+        "at": "2026-01-01T11:04:23.492Z"
+      },
+      {
+        "kind": "extract",
+        "type": "credit_notes",
+        "start_date": "2025-01-01",
+        "end_date": "2026-01-01",
+        "account_id": "Kqgdq",
+        "business_id": "365737",
+        "business_uuid": "046cc001-0002-a988-2aef-189d029a4a11",
+        "total": 7,
+        "line_mode": true,
+        "file_name": "credit_notes_365737.csv",
+        "at": "2026-01-01T11:03:45.793Z"
+      },
+      {
+        "kind": "extract",
+        "type": "business",
+        "start_date": "2025-01-01",
+        "end_date": "2026-01-01",
+        "account_id": "Kqgdq",
+        "business_id": "365737",
+        "business_uuid": "046cc001-0002-a988-2aef-189d029a4a11",
+        "total": 1,
+        "line_mode": false,
+        "file_name": "business_365737.csv",
+        "at": "2026-01-01T11:02:58.319Z"
+      },
+      {
+        "kind": "extract",
+        "type": "profile",
+        "start_date": "2025-01-01",
+        "end_date": "2026-01-01",
+        "account_id": "Kqgdq",
+        "business_id": "365737",
+        "business_uuid": "046cc001-0002-a988-2aef-189d029a4a11",
+        "total": 1,
+        "line_mode": false,
+        "file_name": "profile_365737.csv",
+        "at": "2026-01-01T11:02:20.565Z"
+      },
+      {
+        "kind": "extract",
+        "type": "invoices",
+        "start_date": "2025-01-01",
+        "end_date": "2026-01-01",
+        "account_id": "Kqgdq",
+        "business_id": "365737",
+        "business_uuid": "046cc001-0002-a988-2aef-189d029a4a11",
+        "total": 2046,
+        "line_mode": false,
+        "file_name": "invoices_365737.csv",
+        "at": "2026-01-01T11:02:07.318Z"
+      }
+    ],
+    "meta": {
+      "last_login": "2026-01-01T11:08:07.898Z",
+      "last_business": "Crosspointe LLC",
+      "last_file": "profile_13164187.csv",
+      "account_id": "OdgoRV",
+      "business_id": 13164187,
+      "business_uuid": "e3acf085-55c2-42d2-a0c5-7f608d39099c",
+      "last_type": "profile",
+      "last_total": 1,
+      "last_range": {
+        "start_date": "2025-01-01",
+        "end_date": "2026-01-01"
+      }
+    }
+  },
+  {
+    "id": "hist_1767264797686_f6np",
+    "event": "extract",
+    "timestamp": "2026-01-01T10:53:17.686Z",
+    "user": {
+      "id": null,
+      "name": "esha",
+      "email": null
+    },
+    "meta": {
+      "type": "credit_notes",
+      "start_date": "2025-01-01",
+      "end_date": "2026-01-01",
+      "account_id": "Kqgdq",
+      "business_id": "365737",
+      "business_uuid": "046cc001-0002-a988-2aef-189d029a4a11",
+      "total": 7,
+      "line_mode": true,
+      "file_name": "credit_notes_365737.csv"
+    }
+  },
+  {
+    "id": "hist_1767264757594_zdwf",
+    "event": "extract",
+    "timestamp": "2026-01-01T10:52:37.594Z",
+    "user": {
+      "id": null,
+      "name": "esha",
+      "email": null
+    },
+    "meta": {
+      "type": "invoices",
+      "start_date": "2025-01-01",
+      "end_date": "2026-01-01",
+      "account_id": "Kqgdq",
+      "business_id": "365737",
+      "business_uuid": "046cc001-0002-a988-2aef-189d029a4a11",
+      "total": 2046,
+      "line_mode": false,
+      "file_name": "invoices_365737.csv"
+    }
+  },
+  {
+    "id": "hist_1767264689237",
+    "event": "login",
+    "timestamp": "2026-01-01T10:51:29.237Z",
+    "user": {
+      "id": null,
+      "name": "esha",
+      "email": null
+    },
+    "meta": {
+      "type": "login"
+    }
+  },
+  {
+    "id": "hist_1767264232544",
+    "event": "login",
+    "timestamp": "2026-01-01T10:43:52.544Z",
+    "user": {
+      "id": null,
+      "name": "ronak",
+      "email": null
+    },
+    "meta": {
+      "type": "login"
+    }
+  },
+  {
+    "id": "hist_1767264129183_trkf",
+    "event": "extract",
+    "timestamp": "2026-01-01T10:42:09.183Z",
+    "user": {
+      "id": null,
+      "name": "ronak",
+      "email": null
+    },
+    "meta": {
+      "type": "expenses",
+      "start_date": "2021-01-01",
+      "end_date": "2026-01-01",
+      "account_id": "02gBzw",
+      "business_id": "14188709",
+      "business_uuid": "2d06f1ad-58b0-4f95-8140-8ef9ca76b8f7",
+      "total": 43,
+      "line_mode": false,
+      "file_name": "expenses_14188709.csv"
+    }
+  },
+  {
+    "id": "hist_1767264112038_ui3i",
+    "event": "extract",
+    "timestamp": "2026-01-01T10:41:52.038Z",
+    "user": {
+      "id": null,
+      "name": "ronak",
+      "email": null
+    },
+    "meta": {
+      "type": "invoices",
+      "start_date": "2021-01-01",
+      "end_date": "2026-01-01",
+      "account_id": "02gBzw",
+      "business_id": "14188709",
+      "business_uuid": "2d06f1ad-58b0-4f95-8140-8ef9ca76b8f7",
+      "total": 92,
+      "line_mode": false,
+      "file_name": "invoices_14188709.csv"
+    }
+  },
+  {
+    "id": "hist_1767262734910",
+    "event": "login",
+    "timestamp": "2026-01-01T10:18:54.910Z",
+    "user": {
+      "id": null,
+      "name": "Unknown User",
+      "email": null
+    },
+    "meta": {
+      "type": "login"
+    }
+  },
+  {
+    "id": "hist_1767262512245_svt0",
+    "event": "extract",
+    "timestamp": "2026-01-01T10:15:12.245Z",
+    "user": {
+      "id": null,
+      "name": "Unknown User",
+      "email": null
+    },
+    "meta": {
+      "type": "invoices",
+      "start_date": "2020-01-01",
+      "end_date": "2026-01-01",
+      "account_id": "Kqgdq",
+      "business_id": "365737",
+      "business_uuid": "046cc001-0002-a988-2aef-189d029a4a11",
+      "total": 2046,
+      "line_mode": false
+    }
+  },
+  {
+    "id": "hist_1767262424602",
+    "event": "login",
+    "timestamp": "2026-01-01T10:13:44.602Z",
+    "user": {
+      "id": null,
+      "name": "Unknown User",
+      "email": null
+    },
+    "meta": {
+      "type": "login"
+    }
+  }
+]

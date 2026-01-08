@@ -24,6 +24,8 @@ const ENV_PATH = path.resolve(".env");
 let accessToken = process.env.ACCESS_TOKEN || "";
 let refreshToken = process.env.REFRESH_TOKEN || "";
 let tokenExpiry = 0;
+const HISTORY_PATH = path.resolve("history.log.json");
+const MAX_HISTORY_ITEMS = 500;
 const pretty = (obj) => {
 
   try {
@@ -45,6 +47,87 @@ const normalizeDateParam = (value) => {
   const dd = String(parsed.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 };
+const loadHistory = () => {
+  try {
+    if (!fs.existsSync(HISTORY_PATH)) return [];
+    const parsed = JSON.parse(fs.readFileSync(HISTORY_PATH, "utf-8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.warn("[History] Failed to read history:", err.message);
+    return [];
+  }
+};
+const persistHistory = (items) => {
+  try {
+    fs.writeFileSync(
+      HISTORY_PATH,
+      JSON.stringify(items.slice(0, MAX_HISTORY_ITEMS), null, 2)
+    );
+  } catch (err) {
+    console.warn("[History] Failed to write history:", err.message);
+  }
+};
+const appendHistoryEntry = (entry) => {
+  const next = loadHistory();
+  next.unshift(entry);
+  persistHistory(next);
+};
+const userKey = (u) => {
+  if (!u) return "";
+  if (u.id) return `id:${u.id}`;
+  const name = (u.name || "").trim().toLowerCase();
+  return `name:${name}`;
+};
+const upsertSessionHistory = (user, updateFn) => {
+  const list = loadHistory();
+  const key = userKey(user);
+  const idx = list.findIndex(
+    (item) => item.event === "session" && userKey(item.user) === key
+  );
+  const base =
+    idx >= 0
+      ? list[idx]
+      : {
+          id: `session_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          event: "session",
+          user,
+          timestamp: new Date().toISOString(),
+          actions: [],
+          meta: {},
+        };
+  const updated = updateFn({ ...base, user: { ...base.user, ...user } }) || base;
+  const filtered = idx >= 0 ? list.filter((_, i) => i !== idx) : list;
+  filtered.unshift(updated);
+  persistHistory(filtered);
+  return updated;
+};
+const summarizeUserFromWhoami = (whoami) => {
+  const user =
+    whoami?.user ||
+    whoami?.response?.user ||
+    whoami?.response?.user ||
+    whoami?.user ||
+    {};
+  const fullName = [user.fname, user.lname].filter(Boolean).join(" ").trim();
+  return {
+    id: user.id ?? user.userid ?? user.user_id ?? null,
+    name: fullName || user.organization || user.email || "Unknown User",
+    email: user.email || null,
+  };
+};
+const sanitizeUserName = (name) => {
+  if (!name) return "";
+  return String(name).trim().slice(0, 120);
+};
+async function getUserSummary(token) {
+  try {
+    const whoami = await fetchWhoami(token);
+    return summarizeUserFromWhoami(whoami);
+  } catch (err) {
+    console.warn("[History] Could not fetch user profile for history:", err.message);
+    return { id: null, name: "Unknown User", email: null };
+  }
+}
 // ---------------------------
 // safe .env write helper
 // ---------------------------
@@ -142,29 +225,39 @@ app.get("/test", (_req, res) => res.send("Server running successfully 🚀"));
 
 // ---------------------------
 
-app.get("/auth", (_req, res) => {
+app.get("/auth", (req, res) => {
+  const incomingName = sanitizeUserName(req.query.user_name);
+  const statePayload = incomingName ? { user_name: incomingName } : null;
+  const state = statePayload ? JSON.stringify(statePayload) : "";
 
-  const authUrl = `https://auth.freshbooks.com/oauth/authorize?client_id=${process.env.CLIENT_ID
+  const url = new URL("https://auth.freshbooks.com/oauth/authorize");
+  url.searchParams.set("client_id", process.env.CLIENT_ID);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("redirect_uri", process.env.REDIRECT_URI);
+  url.searchParams.set("scope", process.env.SCOPE);
+  url.searchParams.set("prompt", "login");
+  url.searchParams.set("access_type", "offline");
+  if (state) url.searchParams.set("state", state);
+  const authUrl = url.toString();
 
-    }&response_type=code&redirect_uri=${encodeURIComponent(process.env.REDIRECT_URI)}&scope=${encodeURIComponent(
-
-      process.env.SCOPE
-
-    )}&prompt=login&access_type=offline`;
-
-
-
-  console.log("📡 Redirecting user to FreshBooks login page:", authUrl);
-
+  console.log("?? Redirecting user to FreshBooks login page:", authUrl);
   res.redirect(authUrl);
-
 });
 
 
 
 app.get("/callback", async (req, res) => {
 
-  const { code } = req.query;
+  const { code, state } = req.query;
+  let stateName = "";
+  try {
+    if (state) {
+      const decoded = JSON.parse(state);
+      stateName = sanitizeUserName(decoded?.user_name);
+    }
+  } catch {
+    // ignore malformed state
+  }
 
   if (!code) return res.send("❌ Missing authorization code");
 
@@ -208,6 +301,23 @@ app.get("/callback", async (req, res) => {
 
     safeReplaceEnv("REFRESH_TOKEN", refreshToken);
 
+    try {
+      const userProfile = await getUserSummary(accessToken);
+      const user =
+        stateName && stateName.length
+          ? { ...userProfile, name: stateName }
+          : userProfile;
+      upsertSessionHistory(user, (session) => {
+        return {
+          ...session,
+          timestamp: new Date().toISOString(),
+          meta: { ...session.meta, last_login: new Date().toISOString() },
+          actions: session.actions || [],
+        };
+      });
+    } catch (historyErr) {
+      console.warn("[History] Unable to log login event:", historyErr.message);
+    }
 
 
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
@@ -216,7 +326,9 @@ app.get("/callback", async (req, res) => {
 
       accessToken
 
-    )}&refresh=${encodeURIComponent(refreshToken)}&expires=${tokenRes.data.expires_in}`;
+    )}&refresh=${encodeURIComponent(refreshToken)}&expires=${tokenRes.data.expires_in}${
+      stateName ? `&user_name=${encodeURIComponent(stateName)}` : ""
+    }`;
 
 
 
@@ -458,6 +570,56 @@ app.get("/api/extract", async (req, res) => {
         // ignore resolve error, will be validated below
       }
     }
+
+    let cachedHistoryUser = null;
+    const getHistoryUser = async () => {
+      if (cachedHistoryUser) return cachedHistoryUser;
+      const manualName = sanitizeUserName(
+        req.headers["x-user-name"] || req.query.user_name
+      );
+      const profile = await getUserSummary(validToken);
+      cachedHistoryUser = manualName ? { ...profile, name: manualName } : profile;
+      return cachedHistoryUser;
+    };
+    const logExtractEvent = async (payload) => {
+      try {
+        const user = await getHistoryUser();
+        upsertSessionHistory(user, (session) => {
+          const actions = Array.isArray(session.actions) ? [...session.actions] : [];
+          actions.unshift({
+            kind: "extract",
+            type,
+            start_date,
+            end_date,
+            account_id,
+            business_id,
+            business_uuid,
+            total: payload?.total ?? (Array.isArray(payload?.data) ? payload.data.length : null),
+            line_mode: lineMode,
+            file_name: req.query.file_name || null,
+            at: new Date().toISOString(),
+          });
+          return {
+            ...session,
+            timestamp: new Date().toISOString(),
+            actions,
+            meta: {
+              ...session.meta,
+              last_type: type,
+              last_total: payload?.total ?? null,
+              last_range: { start_date, end_date },
+              last_file: req.query.file_name || session.meta?.last_file || null,
+            },
+          };
+        });
+      } catch (err) {
+        console.warn("[History] Failed to log extraction:", err.message);
+      }
+    };
+    const respond = async (payload) => {
+      await logExtractEvent(payload);
+      return res.json(payload);
+    };
 
     const makeAccountUrl = (s) => `/accounting/account/${account_id}${s}`;
     const makeBizUuidUrl = (s) => `/accounting/businesses/${business_uuid}${s}`;
@@ -1012,21 +1174,37 @@ app.get("/api/extract", async (req, res) => {
           (Array.isArray(item.sub_accounts) && item.sub_accounts) ||
           (Array.isArray(item.subaccounts) && item.subaccounts) ||
           [];
-        const subNames = subs
-          .map((s) => s.account_name || s.name || s.system_account_name)
-          .filter(Boolean)
-          .join(", ");
-        const currencyFromSubs =
-          subs.find((s) => s.currency_code)?.currency_code || null;
-        return {
+
+        const currencyFromSubs = subs.find((s) => s.currency_code)?.currency_code || null;
+        const parentRow = {
           account_name: item.account_name ?? item.name ?? null,
           account_number: item.account_number ?? null,
           account_type: item.account_type ?? item.type ?? null,
-          currency_code: item.currency_code ?? currencyFromSubs ?? null,
-          // Join child account names into a simple string instead of raw JSON
-          sub_accounts: subNames || null,
           account_sub_type: item.account_sub_type ?? item.sub_type ?? item.subtype ?? null,
+          currency_code: item.currency_code ?? currencyFromSubs ?? null,
+          sub_accounts: subs
+            .map((s) => s.account_name || s.name || s.system_account_name)
+            .filter(Boolean)
+            .join(", ") || null,
+          is_sub_account: false,
+          parent_account_name: null,
+          parent_account_number: null,
         };
+
+        const subRows = subs.map((s) => ({
+          account_name: s.account_name || s.name || s.system_account_name || null,
+          account_number: s.account_number ?? s.number ?? s.accountnumber ?? null,
+          account_type: s.account_type ?? s.type ?? parentRow.account_type ?? null,
+          account_sub_type: s.account_sub_type ?? s.sub_type ?? s.subtype ?? parentRow.account_sub_type ?? null,
+          currency_code: s.currency_code ?? parentRow.currency_code ?? null,
+          sub_accounts: null,
+          is_sub_account: true,
+          parent_account_name: parentRow.account_name,
+          parent_account_number: parentRow.account_number,
+        }));
+
+        // Return parent + each sub-account as its own row for "line-wise" export
+        return [parentRow, ...subRows];
       }
 
       if (recordType === "expenses") {
@@ -1108,7 +1286,7 @@ app.get("/api/extract", async (req, res) => {
           timeout: 120000,
         });
 
-        return res.json({
+        return respond({
           success: true,
           total: 1,
           data: [
@@ -1128,7 +1306,7 @@ app.get("/api/extract", async (req, res) => {
               memberships.find((m) => String(m.business?.id) === String(business_id)) ||
               memberships[0];
             if (match?.business) {
-              return res.json({
+              return respond({
                 success: true,
                 total: 1,
                 data: [match.business],
@@ -1176,9 +1354,13 @@ app.get("/api/extract", async (req, res) => {
             Object.values(body).find((v) => Array.isArray(v)) ||
             [];
 
-          const enriched = arr.map((item) => formatRecord(type, item));
+          const enriched = arr.flatMap((item) => {
+            const rec = formatRecord(type, item);
+            if (rec === null || rec === undefined) return [];
+            return Array.isArray(rec) ? rec : [rec];
+          });
 
-          return res.json({
+          return respond({
             success: true,
             total: enriched.length,
             data: enriched,
@@ -1306,9 +1488,13 @@ const url = urlObj.toString();
         );
       }
 
-      const enriched = allData.map((item) => formatRecord(type, item));
+      const enriched = allData.flatMap((item) => {
+        const rec = formatRecord(type, item);
+        if (rec === null || rec === undefined) return [];
+        return Array.isArray(rec) ? rec : [rec];
+      });
 
-      return res.json({
+      return respond({
         success: true,
         total: enriched.length,
         data: enriched,
@@ -1403,14 +1589,18 @@ const url = urlObj.toString();
       );
     }
 
-    const enriched = allData.map((item) => formatRecord(type, item));
+    const enriched = allData.flatMap((item) => {
+      const rec = formatRecord(type, item);
+      if (rec === null || rec === undefined) return [];
+      return Array.isArray(rec) ? rec : [rec];
+    });
 
     let headers = null;
     if (type === "payments") {
       headers = ["amount", "clientid", "creditid", "date", "invoice_number"];
     }
 
-    return res.json({
+    return respond({
       success: true,
       total: enriched.length,
       data: enriched,
@@ -1951,6 +2141,35 @@ app.get("/api/generate-journal", async (req, res) => {
 
 // ---------------------------
 
+// Activity history (login + extract)
+
+// ---------------------------
+
+app.get("/api/history", (req, res) => {
+  try {
+    const limit = Number(req.query?.limit);
+    const history = loadHistory();
+    const unique = [];
+    const seen = new Set();
+    for (const item of history) {
+      const key = item.event === "session" ? userKey(item.user) : `${item.event}:${item.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(item);
+    }
+    const trimmed =
+      Number.isFinite(limit) && limit > 0 ? unique.slice(0, limit) : unique;
+    res.json({ success: true, history: trimmed });
+  } catch (err) {
+    console.error("[History] Failed to load history:", err.message);
+    res.status(500).json({ error: "Unable to load history" });
+  }
+});
+
+
+
+// ---------------------------
+
 // Reset session / update tokens
 
 // ---------------------------
@@ -1997,7 +2216,7 @@ app.post("/api/update-tokens", async (req, res) => {
 
   try {
 
-    const { access_token, refresh_token, account_id, business_id, business_uuid } = req.body;
+    const { access_token, refresh_token, account_id, business_id, business_uuid, file_name, business_name } = req.body;
 
     if (!access_token || !refresh_token)
 
@@ -2034,6 +2253,25 @@ app.post("/api/update-tokens", async (req, res) => {
     safeReplaceEnv("ACCESS_TOKEN", access_token);
 
     safeReplaceEnv("REFRESH_TOKEN", refresh_token);
+    // Update session meta with business/file info
+    try {
+      const manualName = sanitizeUserName(req.headers["x-user-name"]);
+      const userProfile = await getUserSummary(access_token);
+      const user = manualName ? { ...userProfile, name: manualName } : userProfile;
+      upsertSessionHistory(user, (session) => ({
+        ...session,
+        meta: {
+          ...session.meta,
+          last_business: business_name || session.meta?.last_business || null,
+          last_file: file_name || session.meta?.last_file || null,
+          account_id,
+          business_id,
+          business_uuid,
+        },
+      }));
+    } catch (err) {
+      console.warn("[History] Unable to update session meta on business update:", err.message);
+    }
     console.log("✅ Tokens updated successfully (Memory + File Synced)");
 
     res.json({ success: true, message: "Tokens updated successfully" });
@@ -2053,3 +2291,4 @@ app.post("/api/update-tokens", async (req, res) => {
 const PORT = process.env.PORT || 5050;
 
 app.listen(PORT, "0.0.0.0", () => console.log(`🚀 Backend running on http://localhost:${PORT}`));
+  
